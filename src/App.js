@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import 'chart.js/auto';
 import './App.css';
@@ -22,12 +22,12 @@ const PriceChart = () => {
   const [currentPrices, setCurrentPrices] = useState({});
 
   // Mapeamento de cores para cada mercado
-  const marketColorMap = {
+  const marketColorMap = useMemo(() => ({
     "Avenida": "#e6a820",
     "Central": "#2175db", // "#215eaa", - Cor original
     "Neto": "#b61414",
     "Open": "#9c1d9c"
-  };
+  }), []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -95,7 +95,7 @@ const PriceChart = () => {
     };
 
     fetchData();
-  }, []);
+  }, [marketColorMap]);
 
   const options = {
     responsive: true,
