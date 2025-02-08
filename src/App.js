@@ -20,6 +20,7 @@ const db = getFirestore(app);
 const PriceChart = () => {
   const [chartData, setChartData] = useState(null);
   const [currentPrices, setCurrentPrices] = useState({});
+  const [hiddenMarkets, setHiddenMarkets] = useState(new Set());
 
   // Mapeamento de cores para cada mercado
   const marketColorMap = useMemo(() => ({
@@ -76,6 +77,7 @@ const PriceChart = () => {
           borderWidth: 2,
           pointRadius: 4,
           pointBackgroundColor: color,
+          hidden: hiddenMarkets.has(marketName),
         };
       });
 
@@ -95,7 +97,22 @@ const PriceChart = () => {
     };
 
     fetchData();
-  }, [marketColorMap]);
+  }, [marketColorMap, hiddenMarkets]);
+
+  // Alternar a visibilidade
+  const toggleMarketVisibility = (marketName) => {
+    setHiddenMarkets(prevState => {
+      const newState = new Set(prevState);
+      if (newState.has(marketName)) {
+        newState.delete(marketName);
+      } else {
+        newState.add(marketName);
+      }
+      return newState;
+    });
+  };
+
+  const minPrice = Math.min(...Object.values(currentPrices));
 
   const options = {
     responsive: true,
@@ -105,6 +122,10 @@ const PriceChart = () => {
         display: false,
         position: 'top',
       },
+    },
+    hover: {
+      mode: 'nearest',
+      intersect: false,
     },
     scales: {
       x: {
@@ -124,6 +145,12 @@ const PriceChart = () => {
         },
       },
     },
+    elements: {
+      point: {
+        hitRadius: 10,
+        hoverRadius: 10,
+      },
+    },
   };
 
   return (
@@ -133,9 +160,22 @@ const PriceChart = () => {
 
         <div className="current-prices">
           {Object.keys(currentPrices).map((marketName) => (
-            <p key={marketName} className="current-price" style={{ color: marketColorMap[marketName] }}>
+            <p
+              key={marketName}
+              className="current-price"
+              style={{ color: marketColorMap[marketName], cursor: 'pointer' }}
+              onClick={() => toggleMarketVisibility(marketName)}
+            >
               {`${marketName}:`}
-              <p className="price-value">{`R$ ${currentPrices[marketName]?.toFixed(2) || "-"}`}</p>
+              <p
+                className="price-value"
+                style={{
+                  fontWeight: currentPrices[marketName] === minPrice ? 'bold' : 'normal',
+                  color: currentPrices[marketName] === minPrice ? '#a4cf39' : '#cccccc',
+                }}
+              >
+                {`R$ ${currentPrices[marketName]?.toFixed(2) || "-"}`}
+              </p>
             </p>
           ))}
         </div>
