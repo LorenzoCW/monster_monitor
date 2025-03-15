@@ -156,7 +156,7 @@ const PriceChart = () => {
   return (
     <div className="chart-container">
       <header className="chart-header">
-        <h1>Monitor Monitor</h1>
+        <h1>Monster Monitor</h1>
 
         <div className="current-prices">
           {Object.keys(currentPrices).map((marketName) => (
