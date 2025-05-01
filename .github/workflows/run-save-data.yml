@@ -1,0 +1,39 @@
+name: Executar save_data.py todo dia as 8:00 BRT
+
+on:
+  schedule:
+    - cron: '0 11 * * *'
+
+jobs:
+  run-save-data:
+    name: Executar script save_data.py
+    runs-on: ubuntu-latest
+
+    env:
+      TASK_ID: ${{ secrets.TASK_ID }}
+      CLIENT_TOKEN: ${{ secrets.CLIENT_TOKEN }}
+      FIREBASE_CREDENTIALS_PATH: ${{ secrets.FIREBASE_CREDENTIALS_PATH }}
+
+    steps:
+      - name: Fazer checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Gerar arquivo .env
+        run: |
+          echo "TASK_ID=$TASK_ID" >> .env
+          echo "CLIENT_TOKEN=$CLIENT_TOKEN" >> .env
+          echo "FIREBASE_CREDENTIALS_PATH=$FIREBASE_CREDENTIALS_PATH" >> .env
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install apify-client google-api-python-client google-cloud-firestore python-dotenv pytz
+
+      - name: Executar backend/save_data.py
+        run: |
+          python backend/save_data.py
