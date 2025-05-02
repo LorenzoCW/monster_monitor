@@ -10,7 +10,7 @@ import logging
 import datetime
 
 # Configurações
-debug = True
+debug = False
 debug_time = 2
 
 TIMEZONE = pytz.timezone("America/Sao_Paulo")
@@ -213,29 +213,43 @@ def fetch_data(db):
     try:
         collection_ref = db.collection("monster_data")
         docs = collection_ref.stream()
-        
+
         data = []
         for doc in docs:
             doc_data = doc.to_dict()
             data.append({
                 "date": doc.id,
-                "preço_Avenida": doc_data.get("preço_Avenida", 0),
-                "preço_Central": doc_data.get("preço_Central", 0),
-                "preço_Neto": doc_data.get("preço_Neto", 0),
-                "preço_Open": doc_data.get("preço_Open", 0)
+                "preço_Avenida": doc_data.get("preço_Avenida"),
+                "preço_Central": doc_data.get("preço_Central"),
+                "preço_Neto": doc_data.get("preço_Neto"),
+                "preço_Open": doc_data.get("preço_Open")
             })
 
-        if data:
-            message(f"{len(data)} registros encontrados no Firestore.")
-        else:
+        if not data:
             message("Nenhum dado encontrado na coleção.")
+            return
+
+        # Ordena cronologicamente pelos IDs (datas)
+        data.sort(key=lambda x: datetime.datetime.strptime(x["date"], "%Y-%m-%d"))
+
+        # Forward-fill: preenche valores ausentes com o último valor conhecido
+        last_values = {}
+        for row in data:
+            for key in ["preço_Avenida", "preço_Central", "preço_Neto", "preço_Open"]:
+                if row[key] is None:
+                    # se não houver valor atual, usa o último
+                    row[key] = last_values.get(key)
+                else:
+                    # atualiza último valor conhecido
+                    last_values[key] = row[key]
+
+        message(f"{len(data)} registros encontrados e valores forward-filled.")
+        return data
+
     except Exception as e:
         error_message = message(f"Erro ao buscar os dados: {str(e)}", True)
         upload_status(db, "final_result", error_message)
         return
-
-    message("Dados encontrados no Firestore.")
-    return data
 
 def parse_data(data):
     message("Separando dados...")
@@ -282,7 +296,6 @@ def recurring_price(data, title):
             most_frequent = price
     
     last_price = data[-1] if data else None
-    # return most_frequent, last_price
     return {
         "recurring_price": most_frequent,
         "last_price": last_price,
@@ -400,7 +413,7 @@ def main():
 
     response = scrape_and_save(db, client_token, task_id)
     if not response: return
-    
+
     data = parse_and_save_data(db)
     if not data: return
 
