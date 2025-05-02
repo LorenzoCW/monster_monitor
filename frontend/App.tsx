@@ -1,10 +1,19 @@
 import React, { useMemo, useEffect, useState } from 'react';
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, } from 'chart.js';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import type { ChartData, ChartOptions } from 'chart.js';
 import './App.css';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_API_KEY,
@@ -30,10 +39,14 @@ ChartJS.register(
 
 type PriceDataMap = Record<string, (number | null)[]>;
 type CurrentPricesMap = Record<string, number | null>;
+type ChangeIndicatorMap = Record<string, string>;
+type LastPricesMap = Record<string, number | null>;
 
 const App: React.FC = () => {
   const [chartData, setChartData] = useState<ChartData<'line', (number | null)[], string> | null>(null);
   const [currentPrices, setCurrentPrices] = useState<CurrentPricesMap>({});
+  const [changeIndicators, setChangeIndicators] = useState<ChangeIndicatorMap>({});
+  const [lastPrices, setLastPrices] = useState<LastPricesMap>({});
   const [hiddenMarkets, setHiddenMarkets] = useState<Set<string>>(new Set());
 
   // Colors for each market
@@ -46,53 +59,68 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const fetchData = async () => {
-      const dataCollection = collection(db, 'monster_data');
-      const snapshot = await getDocs(dataCollection);
+      // Fetch parsed month data
+      const dataRef = doc(db, 'parsed_data', 'points_array');
+      const dataSnap = await getDoc(dataRef);
+      if (!dataSnap.exists()) return;
 
-      const dates = new Set<string>();
-      const raw: { date: string; data: Record<string, any> }[] = [];
-
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        raw.push({ date: doc.id, data });
-        dates.add(doc.id);
-      });
-
-      const sortedDates = Array.from(dates).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+      const { month_data: monthData = {} } = dataSnap.data();
       const priceData: PriceDataMap = {};
-
-      raw.forEach(({ date, data }) => {
-        Object.entries(data).forEach(([key, value]) => {
-          if (key.startsWith('preço_')) {
-            const market = key.replace('preço_', '');
-            if (!priceData[market]) priceData[market] = Array(sortedDates.length).fill(null);
-            const idx = sortedDates.indexOf(date);
-            priceData[market][idx] = value ?? null;
-          }
+      let sortedDates: string[] = [];
+      const marketKeys = Object.keys(monthData).filter(key => key.startsWith('price_points_'));
+      if (marketKeys.length > 0) {
+        const firstPoints = (monthData[marketKeys[0]] as { x: string; y: number }[]) || [];
+        sortedDates = firstPoints.map(p => p.x);
+      }
+      marketKeys.forEach(key => {
+        const market = key.replace('price_points_', '');
+        const points = (monthData[key] as { x: string; y: number }[]) || [];
+        priceData[market] = sortedDates.map(date => {
+          const match = points.find(p => p.x === date);
+          return match ? match.y : null;
         });
       });
 
-      const datasets = Object.entries(priceData).map(([market, values]) => {
-        const color = marketColorMap[market] ?? 'gray';
-        return {
-          label: market,
-          data: values,
-          borderColor: color,
-          backgroundColor: `${color}33`,
-          borderWidth: 2,
-          pointRadius: 4,
-          pointBackgroundColor: color,
-          hidden: hiddenMarkets.has(market),
-        };
-      });
+      // Fetch calcs data
+      const calcsRef = doc(db, 'parsed_data', 'calcs');
+      const calcsSnap = await getDoc(calcsRef);
+      const indicators: ChangeIndicatorMap = {};
+      const lasts: LastPricesMap = {};
+      if (calcsSnap.exists()) {
+        const calcsData = calcsSnap.data();
+        Object.keys(priceData).forEach(market => {
+          const key = `${market}_changes`;
+          const changeObj = calcsData[key] as { change_indicator?: string; last_price?: number };
+          indicators[market] = changeObj?.change_indicator ?? '';
+          lasts[market] = changeObj?.last_price ?? null;
+        });
+      }
+
+      // Sort markets alphabetically
+      const sortedMarkets = Object.keys(priceData).sort();
+      // Build datasets
+      const datasets = sortedMarkets.map(market => ({
+        label: market,
+        data: priceData[market],
+        borderColor: marketColorMap[market] ?? 'gray',
+        backgroundColor: `${marketColorMap[market] ?? 'gray'}33`,
+        borderWidth: 2,
+        pointRadius: 4,
+        pointBackgroundColor: marketColorMap[market] ?? 'gray',
+        hidden: hiddenMarkets.has(market),
+      }));
 
       setChartData({ labels: sortedDates, datasets });
-
-      const latest: CurrentPricesMap = {};
-      Object.entries(priceData).forEach(([market, values]) => {
-        latest[market] = values[values.length - 1] ?? null;
+      // Current prices from data array
+      const current: CurrentPricesMap = {};
+      sortedMarkets.forEach(market => {
+        const vals = priceData[market];
+        current[market] = vals[vals.length - 1] ?? null;
       });
-      setCurrentPrices(latest);
+
+      setCurrentPrices(current);
+      setChangeIndicators(indicators);
+      setLastPrices(lasts);
     };
 
     fetchData();
@@ -106,8 +134,14 @@ const App: React.FC = () => {
     });
   };
 
-  const numericPrices = Object.values(currentPrices).map(v => (v === null ? Infinity : v));
-  const minPrice = Math.min(...numericPrices);
+  // Alphabetical markets ordering
+  const sortedMarkets = Object.keys(currentPrices).sort();
+  // Determine which market to highlight using lastPrices
+  const highlightMarket = sortedMarkets.reduce((prev, market) => {
+    const price = lastPrices[market] ?? Infinity;
+    const prevPrice = prev ? (lastPrices[prev] ?? Infinity) : Infinity;
+    return price < prevPrice ? market : prev;
+  }, '');
 
   const options: ChartOptions<'line'> = {
     responsive: true,
@@ -116,7 +150,6 @@ const App: React.FC = () => {
     hover: { mode: 'nearest', intersect: false },
     scales: {
       x: { grid: { display: false }, ticks: { color: '#666' } },
-      // y: { grid: { dash: [5, 5] }, ticks: { color: '#666' } },
       y: { grid: { display: false }, ticks: { color: '#666' } },
     },
     elements: { point: { hitRadius: 10, hoverRadius: 10 } },
@@ -127,25 +160,32 @@ const App: React.FC = () => {
       <header className="chart-header">
         <h1>Monster Monitor</h1>
         <div className="current-prices">
-          {Object.entries(currentPrices).map(([market, price]) => (
-            <div
-              key={market}
-              className="current-price"
-              style={{ color: marketColorMap[market], cursor: 'pointer' }}
-              onClick={() => toggleMarketVisibility(market)}
-            >
-              <span>{`${market}: `}</span>
-              <span
-                className="price-value"
-                style={{
-                  fontWeight: price === minPrice ? 'bold' : 'normal',
-                  color: price === minPrice ? '#a4cf39' : '#cccccc',
-                }}
+          {sortedMarkets.map(market => {
+            const price = currentPrices[market];
+            const last = lastPrices[market];
+            return (
+              <div
+                key={market}
+                className="current-price"
+                style={{ color: marketColorMap[market], cursor: 'pointer' }}
+                onClick={() => toggleMarketVisibility(market)}
               >
-                {price !== null ? `R$ ${price.toFixed(2)}` : '-'}
-              </span>
-            </div>
-          ))}
+                <span>{`${market}: `}</span>
+                <div
+                  className="price-value"
+                  style={{
+                    fontWeight: market === highlightMarket ? 'bold' : 'normal',
+                    color: market === highlightMarket ? '#a4cf39' : '#cccccc',
+                  }}
+                >
+                  <span className="indicator">
+                    {changeIndicators[market] ? `${changeIndicators[market]} ` : ''}
+                  </span>
+                  {last !== null ? `R$ ${last.toFixed(2)}` : price !== null ? `R$ ${price.toFixed(2)}` : '-'}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </header>
       <div className="chart-wrapper">
